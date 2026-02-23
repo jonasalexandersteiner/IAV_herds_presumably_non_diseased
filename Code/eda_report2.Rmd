@@ -1,0 +1,256 @@
+---
+title: "Descriptive statics SIV_farms"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float: true
+    theme: readable
+    df_print: paged
+    encoding: UTF-8
+    self_contained: true
+---
+
+```{r setup, echo=FALSE, message=FALSE, warning=FALSE}
+if (!require("pacman")) install.packages("pacman")
+pacman::p_load(tidyverse, skimr, GGally, lubridate, gridExtra, grid, knitr)
+
+# Display dataset information (using df3 from parent environment)
+cat("Dataset dimensions:", nrow(df3), "rows x", ncol(df3), "columns\n")
+```
+
+```{r helpers, echo=FALSE}
+summary_text <- function(x, varname) {
+  if (varname == "farm_id") return("Variable: farm_id (ID variable, skipped summary.)")
+  
+  # Handle encoding safely
+  safe_print <- function(txt) {
+    tryCatch(
+      iconv(txt, "latin1", "UTF-8", sub = ""),
+      error = function(e) as.character(txt)
+    )
+  }
+  
+  cl <- paste("Class:", paste(class(x), collapse=", "))
+  variance <- if(is.numeric(x)) paste("Variance:", format(var(x), digits=4)) else NULL
+  shapiro_test <- NULL
+  n_missing <- sum(is.na(x))
+  
+  if(is.numeric(x)) {
+    x_non_na <- x[!is.na(x)]
+    if(length(x_non_na) >= 3 && length(x_non_na) <= 5000) {
+      sw <- tryCatch(shapiro.test(x_non_na), error=function(e) NULL)
+      if(!is.null(sw)) {
+        shapiro_test <- paste0("Shapiro-Wilk p-value: ", format(sw$p.value, digits=4),
+                               ifelse(sw$p.value < 0.05, " (not normal)", " (normal)"))
+      }
+    } else {
+      shapiro_test <- "Shapiro-Wilk test not applicable (n<3 or n>5000)"
+    }
+    s <- summary(x)
+    txt <- paste(
+      cl,
+      paste(names(s), format(s, digits=4), collapse="\n"),
+      variance,
+      shapiro_test,
+      paste("NA count:", n_missing),
+      sep="\n"
+    )
+  } else if (is.factor(x)) {
+    tbl <- summary(x)
+    tbl_names <- safe_print(names(tbl))
+    props <- prop.table(table(x, useNA="no"))
+    prop_names <- safe_print(names(props))
+    mode_val <- safe_print(names(which.max(table(x))))
+    lvls <- safe_print(levels(x))
+    
+    txt <- paste(
+      cl,
+      paste(tbl_names, as.integer(tbl), collapse="\n"),
+      paste("Mode:", mode_val),
+      paste("Proportion of levels:", 
+            paste(prop_names, sprintf("%.2f", as.numeric(props)), collapse=", ")),
+      paste("Levels:", paste(lvls, collapse=", ")),
+      paste("NA count:", n_missing),
+      sep="\n"
+    )
+  } else if (is.logical(x)) {
+    tbl <- table(x, useNA="no")
+    props <- prop.table(tbl)
+    mode_val <- names(which.max(tbl))
+    txt <- paste(
+      cl,
+      paste(names(tbl), as.integer(tbl), collapse="\n"),
+      paste("Mode:", mode_val),
+      paste("Proportion of levels:", 
+            paste(names(props), sprintf("%.2f", as.numeric(props)), collapse=", ")),
+      paste("NA count:", n_missing),
+      sep="\n"
+    )
+  } else if (inherits(x, "Date") || inherits(x, "POSIXct")) {
+    s <- summary(x)
+    txt <- paste(
+      cl,
+      paste(names(s), format(s, digits=4), collapse="\n"),
+      paste("NA count:", n_missing),
+      sep="\n"
+    )
+  } else {
+    txt <- cl
+  }
+  return(paste("Variable:", varname, "\n", txt))
+}
+```
+
+# Descriptive statistics
+
+Below you'll find a per-variable summary and relevant plots for the SIV_farms (`df3`) data set.
+Character variables are excluded from this analysis.  
+
+---
+
+<span style="font-size:2em; font-weight:bold;">Outcomes</span>
+
+```{r outcome_block, results='asis', echo=FALSE, message=FALSE, warning=FALSE, fig.width=12, fig.height=4}
+# Define outcome variables
+outcome_vars <- names(df3)
+outcome_vars <- outcome_vars[outcome_vars != "farm_id"]
+
+# Ensure 'source_of_contact_grouped' is rendered immediately AFTER 'rectal_temperature_avg'
+rt_idx  <- match("rectal_temperature_avg", outcome_vars)
+soc_idx <- match("source_of_contact_grouped", outcome_vars)
+if (!is.na(rt_idx) && !is.na(soc_idx) && soc_idx != rt_idx + 1) {
+  soc_name <- outcome_vars[soc_idx]
+  outcome_vars <- outcome_vars[-soc_idx]
+  # insert after rectal_temperature_avg
+  outcome_vars <- append(outcome_vars, soc_name, after = rt_idx)
+}
+
+# Loop through variables
+for (v in outcome_vars) {
+  x <- df3[[v]]
+  if (is.character(x)) next
+  
+  tryCatch({
+    cat("##", v, "\n")
+    cat("**Summary statistics:**\n\n")
+    cat("<pre>", summary_text(x, v), "</pre>\n\n")
+
+    if (is.numeric(x) || is.integer(x)) {
+      p_hist <- ggplot(df3, aes_string(x=v)) +
+        geom_histogram(bins=30, fill="steelblue", color="white") +
+        ggtitle(paste("Histogram of", v))
+      p_box <- ggplot(df3, aes_string(y=v)) +
+        geom_boxplot(fill="tomato") +
+        ggtitle(paste("Boxplot of", v))
+      p_qq <- ggplot(data.frame(x=x), aes(sample=x)) +
+        stat_qq() + stat_qq_line() +
+        ggtitle(paste("QQ plot of", v))
+      gridExtra::grid.arrange(p_hist, p_box, p_qq, ncol=3)
+    } else if (is.factor(x)) {
+      p_bar <- ggplot(data.frame(x=x), aes(x=x)) +
+        geom_bar(fill="skyblue") +
+        ggtitle(paste("Bar plot of", v)) +
+        theme(axis.text.x=element_text(angle=45, hjust=1))
+      print(p_bar)
+    } else if (is.logical(x)) {
+      p_bar <- ggplot(data.frame(x=factor(x)), aes(x=x)) +
+        geom_bar(fill="orange") +
+        ggtitle(paste("Barplot of", v))
+      print(p_bar)
+    } else if (inherits(x, "Date") || inherits(x, "POSIXct")) {
+      x_date <- as.Date(x)
+      if (all(is.na(x_date))) { x_date <- as.Date(as.POSIXct(x, origin="1970-01-01")) }
+      df_x <- data.frame(date = x_date) %>%
+        mutate(month = floor_date(date, "month"))
+      p_hist <- ggplot(df_x, aes(x=month)) +
+        geom_histogram(binwidth=30, fill="steelblue", color="white", boundary=0) +
+        scale_x_date(date_breaks="1 month", date_labels="%b %Y") +
+        ggtitle(paste("Histogram of", v, "(monthly)")) +
+        theme(axis.text.x=element_text(angle=45, hjust=1))
+      x_num <- as.numeric(x_date)
+      p_qq <- ggplot(data.frame(x=x_num), aes(sample=x)) +
+        stat_qq() + stat_qq_line() +
+        ggtitle(paste("QQ plot of", v, "(numeric representation)"))
+      gridExtra::grid.arrange(p_hist, p_qq, ncol=2)
+    }
+    cat("\n\n")
+  }, error = function(e) {
+    cat("## Error processing variable:", v, "\n")
+    cat("Error message:", e$message, "\n\n")
+  })
+}
+```
+
+---
+
+<span style="font-size:2em; font-weight:bold;">Exposures</span>
+
+```{r exposure_block, results='asis', echo=FALSE, message=FALSE, warning=FALSE, fig.width=12, fig.height=4}
+# Define exposure variables
+all_vars <- names(df3)
+exposure_vars <- all_vars[all_vars != "farm_id"]
+
+# Loop through variables
+for (v in exposure_vars) {
+  x <- df3[[v]]
+  if (is.character(x)) next
+  
+  tryCatch({
+    cat("##", v, "\n")
+    cat("**Summary statistics:**\n\n")
+    cat("<pre>", summary_text(x, v), "</pre>\n\n")
+
+    if (is.numeric(x) || is.integer(x)) {
+      p_hist <- ggplot(df3, aes_string(x=v)) +
+        geom_histogram(bins=30, fill="steelblue", color="white") +
+        ggtitle(paste("Histogram of", v))
+      p_box <- ggplot(df3, aes_string(y=v)) +
+        geom_boxplot(fill="tomato") +
+        ggtitle(paste("Boxplot of", v))
+      p_qq <- ggplot(data.frame(x=x), aes(sample=x)) +
+        stat_qq() + stat_qq_line() +
+        ggtitle(paste("QQ plot of", v))
+      gridExtra::grid.arrange(p_hist, p_qq, ncol=3)
+    } else if (is.factor(x)) {
+      p_bar <- ggplot(data.frame(x=x), aes(x=x)) +
+        geom_bar(fill="skyblue") +
+        ggtitle(paste("Bar plot of", v)) +
+        theme(axis.text.x=element_text(angle=45, hjust=1))
+      print(p_bar)
+    } else if (is.logical(x)) {
+      p_bar <- ggplot(data.frame(x=factor(x)), aes(x=x)) +
+        geom_bar(fill="orange") +
+        ggtitle(paste("Barplot of", v))
+      print(p_bar)
+    } else if (inherits(x, "Date") || inherits(x, "POSIXct")) {
+      x_date <- as.Date(x)
+      if (all(is.na(x_date))) { x_date <- as.Date(as.POSIXct(x, origin="1970-01-01")) }
+      df_x <- data.frame(date = x_date) %>%
+        mutate(month = floor_date(date, "month"))
+      p_hist <- ggplot(df_x, aes(x=month)) +
+        geom_histogram(binwidth=30, fill="steelblue", color="white", boundary=0) +
+        scale_x_date(date_breaks="1 month", date_labels="%b %Y") +
+        ggtitle(paste("Histogram of", v, "(monthly)")) +
+        theme(axis.text.x=element_text(angle=45, hjust=1))
+      x_num <- as.numeric(x_date)
+      p_qq <- ggplot(data.frame(x=x_num), aes(sample=x)) +
+        stat_qq() + stat_qq_line() +
+        ggtitle(paste("QQ plot of", v, "(numeric representation)"))
+      gridExtra::grid.arrange(p_hist, p_qq, ncol=2)
+    }
+    cat("\n\n")
+  }, error = function(e) {
+    cat("## Error processing variable:", v, "\n")
+    cat("Error message:", e$message, "\n\n")
+  })
+}
+```
+
+# Session Information
+```{r session_info, echo=FALSE}
+cat("Generated by:", "jonasalexandersteiner", "\n")
+cat("Generated on:", format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "\n")
+cat("Dataset dimensions:", nrow(df3), "rows x", ncol(df3), "columns\n\n")
+pacman::p_loaded()
+```

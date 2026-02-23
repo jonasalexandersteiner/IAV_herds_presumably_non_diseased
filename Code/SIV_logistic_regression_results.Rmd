@@ -1,0 +1,212 @@
+---
+title: "IAV Key Exposures"
+author: "jonasalexandersteiner"
+date: "`r format(Sys.Date())`"
+output: 
+  html_document:
+    toc: false
+    number_sections: false
+    code_folding: hide
+    df_print: paged
+    self_contained: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+library(dplyr)
+library(pROC)
+library(car)
+library(kableExtra)
+output_dir <- "C:/Users/js22i117/OneDrive - Universitaet Bern/Dokumente/SIV_Projekt/Data_processing/SIV_farms100/04_output"
+load(file.path(output_dir, "SIV_logistic_regression_results.RData"))
+# Helper: HTML decode function for variable names
+decode_html <- function(x) {
+  x <- gsub("&lt;", "<", x, fixed = TRUE)
+  x <- gsub("&gt;", ">", x, fixed = TRUE)
+  x <- gsub("&ge;", "≥", x, fixed = TRUE)
+  x <- gsub("&le;", "≤", x, fixed = TRUE)
+  x
+}
+```
+
+# Logistic regression of key factors in binary PLSR
+
+This report presents summary results and visualizations for a logistic regression model for IAV status in pig herds:
+
+- Top 25 predictors by PLS-DA VIP were identified (husbandry subset).
+- Univariate logistic regressions were computed for these predictors to assess their invidual influence on IAV detection.
+- The final 4 predictors were chosen based on greatest VIP scores, then manually screened for biological plausibility. Variables reflecting intensive farming, missingness, or non-independence/confounding were excluded (see column 'exclusion_due_to_biological_plausibility' in tables).  
+- Multivariable logistic regression was performed with diagnostic checks and transparent reporting.
+- Calibration of the model was assessed using the Hosmer-Lemeshow test and a calibration plot.
+
+---
+
+## Husbandry Subset Model
+
+### Model Sample Size
+
+```{r results='asis'}
+cat("N (Husbandry model used):", nrow(df_logit_husbandry), "<br>")
+```
+
+### Top 25 Predictors: Univariate OR Table
+
+**Top 25 predictors by PLS-DA VIP, with univariate odds ratios, 95% confidence intervals, VIP scores, and biological exclusion rationale. Effect size is VIP (distance from null effect). Variables excluded for biological reasons are annotated.**
+
+```{r results='asis'}
+if (exists("vip_table_husbandry")) {
+  vip_table_husbandry_disp <- as.data.frame(vip_table_husbandry)
+  vip_table_husbandry_disp <- vip_table_husbandry_disp[, !grepl("^x(\\.{3}|…)[0-9]+$", names(vip_table_husbandry_disp))]
+  vip_table_husbandry_disp <- vip_table_husbandry_disp[, c("variable", "VIP", "exclusion_due_to_biological_plausibility")]
+  vip_table_husbandry_disp$variable <- decode_html(vip_table_husbandry_disp$variable)
+  vip_table_husbandry_disp <- vip_table_husbandry_disp %>%
+    mutate(VIP = signif(VIP, 3)) %>%
+    arrange(desc(VIP))
+  kable(vip_table_husbandry_disp, digits=3, caption="Top 25 by VIP with exclusion rationale", align = "l", row.names = FALSE) %>%
+    kable_styling(full_width=FALSE, font_size=14, position="left")
+} else {
+  cat("*Univariate OR table not available.*")
+}
+```
+
+### Model Coefficients
+
+**Logistic regression coefficients, standard errors, and z-values. Model includes final 4 predictors.**
+
+```{r results='asis'}
+husbandry_coeffs <- as.data.frame(summary_fit_husbandry$coefficients)
+names(husbandry_coeffs) <- c("Estimate", "Std. Error", "z value", "P-value")
+husbandry_coeffs$Predictor <- decode_html(rownames(husbandry_coeffs))
+rownames(husbandry_coeffs) <- NULL
+husbandry_coeffs <- husbandry_coeffs[, c("Predictor", "Estimate", "Std. Error", "z value", "P-value")]
+kable(
+  husbandry_coeffs[,c("Predictor", "Estimate", "Std. Error", "z value")], digits = 3, caption = "Coefficients (Husbandry Model)", align = "l", row.names = FALSE
+) %>%
+  kable_styling(full_width=FALSE, font_size=14, position="left")
+```
+
+### Odds Ratios and Confidence Intervals
+
+```{r results='asis'}
+or_ci_husbandry_df <- as.data.frame(or_ci_husbandry)
+names(or_ci_husbandry_df)[1] <- "Odds Ratio"
+or_ci_husbandry_df$Predictor <- decode_html(rownames(or_ci_husbandry_df))
+rownames(or_ci_husbandry_df) <- NULL
+or_ci_husbandry_df <- or_ci_husbandry_df[, c("Predictor", "Odds Ratio", "2.5 %", "97.5 %")]
+kable(
+  or_ci_husbandry_df, digits=3, caption="Odds Ratios & 95% CI (Husbandry Model)", align = "l", row.names = FALSE
+) %>%
+  kable_styling(full_width=FALSE, font_size=14, position="left")
+```
+
+### Diagnostics Overview
+
+<div style="font-size:1.12em; background:#f8f8f8; padding:14px; border-radius:8px; max-width:650px; margin-left:0;">
+  <ul style="margin-bottom:0;">
+    <li>
+      <b>Pseudo-R² (McFadden):</b>
+      <span style="color:#004488; font-weight:600;">`r round(pseudo_r2_husbandry, 3)`</span>
+      &mdash; &gt; 0.2 = reasonable; lower = weak fit.<br>
+      <span style="font-size:93%; color:#555;">
+        `r if (pseudo_r2_husbandry > 0.2) {"Model fit is reasonable."} else {"Model fit is weak."}`
+      </span>
+    </li>
+    <li>
+      <b>AUC (ROC Curve):</b>
+      <span style="color:#004488; font-weight:600;">`r round(auc_value_husbandry, 3)`</span>
+      &mdash; &gt; 0.7 = acceptable, &gt; 0.8 = good.<br>
+      <span style="font-size:93%; color:#555;">
+        `r if (auc_value_husbandry > 0.8) {"Discrimination is good."} else if (auc_value_husbandry > 0.7) {"Discrimination is acceptable."} else {"Discrimination is poor."}`
+      </span>
+    </li>
+  </ul>
+</div>
+
+### Multicollinearity
+
+**Variance Inflation Factor (VIF) for each predictor. VIF > 5 signals multicollinearity.**
+
+```{r results='asis'}
+vif_husbandry_df <- data.frame(Predictor = decode_html(names(vif_vals_husbandry)), VIF = as.vector(vif_vals_husbandry))
+kable(
+  vif_husbandry_df, digits=2, caption="Variance Inflation Factor (Husbandry Model)", align = "l", row.names = FALSE
+) %>%
+  kable_styling(full_width=FALSE, font_size=14, position="left")
+```
+
+### Top 5 Influential Observations
+
+**Cook's Distance for the top 5 most influential points; high values may indicate outliers.**
+
+```{r results='asis'}
+cooks_husbandry_df <- data.frame(Observation = names(head(sort(cooksd_husbandry, decreasing = TRUE), 5)),
+                                 Cook_Distance = head(sort(cooksd_husbandry, decreasing = TRUE), 5))
+kable(
+  cooks_husbandry_df, digits=3, caption="Top 5 Cook's Distance Values (Husbandry Model)", align = "l", row.names = FALSE
+) %>%
+  kable_styling(full_width=FALSE, font_size=14, position="left")
+```
+
+### Visualizations
+
+```{r, fig.width=10, fig.height=4}
+par(mfrow = c(1, 2))
+plot(roc_obj_husbandry, main = "ROC Curve (Husbandry)", col = "blue", lwd = 2)
+plot(cooksd_husbandry, type = "h", main = "Cook's Distance (Husbandry)", ylab = "Cook's D", xlab = "Observation")
+abline(h = 4 / length(cooksd_husbandry), col = "red", lty = 2)
+par(mfrow = c(1, 1))
+```
+
+### Calibration
+
+**Calibration of model predictions was assessed by the Hosmer-Lemeshow test and a calibration plot.**
+
+```{r calibration, results='asis', fig.width=6, fig.height=5}
+if (exists("calib_hl_husbandry") && !is.null(calib_hl_husbandry)) {
+  cat("<b>Hosmer-Lemeshow Test:</b> <br>")
+  cat("Chi-squared =", signif(calib_hl_husbandry$statistic, 3), 
+      ", df =", calib_hl_husbandry$parameter, 
+      ", p-value =", signif(calib_hl_husbandry$p.value, 3), "<br>")
+  cat("A p-value > 0.05 suggests good calibration.<br><br>")
+} else {
+  cat("*Hosmer-Lemeshow test not available.*<br>")
+}
+
+if (exists("calib_plot_husbandry") && !is.null(calib_plot_husbandry)) {
+  calib_plot_husbandry()
+} else if (exists("calib_rms_husbandry") && !is.null(calib_rms_husbandry)) {
+  plot(calib_rms_husbandry, main = "Calibration Curve (Husbandry Model)")
+} else {
+  cat("*Calibration curve not available.*")
+}
+```
+
+---
+
+## Interpretation Notes
+
+- **Exploratory Analysis:** No p-values or statistical significance are interpreted for selection, but all effect sizes and CIs are transparently reported.  
+- **Biological plausibility exclusion:** See the 'exclusion_due_to_biological_plausibility' column in tables for rationale for exclusion.  
+- **Model Fit:** Consider pseudo-R² and AUC for overall model quality.
+- **Calibration:** Hosmer-Lemeshow and calibration curve should be checked for model reliability.
+- **Multicollinearity:** High VIFs may require model simplification.
+- **Influential Points:** Consider sensitivity analysis excluding high Cook’s D observations.
+
+---
+
+## Session Info
+
+```{r session-info, echo=FALSE}
+session_info_path <- file.path(output_dir, "SIV_logistic_regression_sessionInfo.txt")
+if (file.exists(session_info_path)) {
+  cat(readLines(session_info_path), sep="\n")
+} else {
+  sessionInfo()
+}
+```
+
+---
+
+<span style="font-size:16px;">
+Prepared by <b>jonasalexandersteiner</b> on <b>`r format(Sys.Date())`</b>.
+</span>Fl
